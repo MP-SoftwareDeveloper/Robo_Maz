@@ -8,6 +8,7 @@
 #include <algorithm>
 #include <cmath>
 
+
 static const char* TAG = "MecanumRobot";
 
 // ================================================================
@@ -237,7 +238,8 @@ void MecanumRobot::_initTimer()
         .duty_resolution = LEDC_TIMER_10_BIT,
         .timer_num       = LEDC_TIMER_0,
         .freq_hz         = PWM_FREQUENCY_HZ,
-        .clk_cfg         = LEDC_AUTO_CLK
+        .clk_cfg         = LEDC_AUTO_CLK,
+        .deconfigure     = false
     };
     ledc_timer_config(&timer);
 }
@@ -251,7 +253,10 @@ void MecanumRobot::_initChannel(ledc_channel_t channel, int gpio)
         .intr_type  = LEDC_INTR_DISABLE,
         .timer_sel  = LEDC_TIMER_0,
         .duty       = 0,
-        .hpoint     = 0
+        .hpoint     = 0,
+        .sleep_mode  = LEDC_SLEEP_MODE_NO_ALIVE_NO_PD,
+        .flags = 0,
+        .deconfigure     = false
     };
     ledc_channel_config(&cfg);
 }
