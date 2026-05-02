@@ -8,6 +8,7 @@
 // ================================================================
 #include "MecanumRobot.hpp"
 #include "esp_log.h"
+#include "driver/gpio.h"
 #include <algorithm>
 #include <cmath>
 
@@ -43,26 +44,37 @@ MecanumRobot::MecanumRobot(MotorPins frontLeft,
  *   2. _pwm.attachMotorPin()   → GPIO matrix routes MCPWM outputs to physical pins
  *   3. coast()                 → ensures motors are off on startup
  */
-void MecanumRobot::begin()
+void MecanumRobot::begin(DriveMode mode)
 {
-    ESP_LOGI(TAG, "Initialising MecanumRobot — bare-metal MCPWM @ %lu Hz",
-             (unsigned long)PWM_FREQ_HZ);
+    _mode = mode;
+    ESP_LOGI(TAG, "Initialising MecanumRobot — mode: %s",
+             mode == DriveMode::PWM ? "PWM @ 20 kHz" : "DC direct GPIO");
 
-    // Initialise MCPWM peripheral (timers, operators, comparators)
-    _pwm.init();
-
-    // Route each motor's CW and CCW pins to MCPWM outputs
+    // Reset every motor pin to a clean input state before reconfiguring.
+    // This clears any leftover IO MUX / GPIO matrix state from a previous boot.
     for (int i = 0; i < MOTOR_COUNT; ++i) {
-        _pwm.attachMotorPin(
-            static_cast<uint8_t>(i),
-            _pins[i].cw_gpio,
-            _pins[i].ccw_gpio
-        );
+        gpio_reset_pin(static_cast<gpio_num_t>(_pins[i].cw_gpio));
+        gpio_reset_pin(static_cast<gpio_num_t>(_pins[i].ccw_gpio));
     }
 
-    // Safe default: all motors off (coast)
-    coast();
+    if (mode == DriveMode::PWM) {
+        _pwm.init();
+        for (int i = 0; i < MOTOR_COUNT; ++i) {
+            _pwm.attachMotorPin(
+                static_cast<uint8_t>(i),
+                _pins[i].cw_gpio,
+                _pins[i].ccw_gpio
+            );
+        }
+    } else {
+        // DC mode: plain GPIO outputs, no MCPWM involved
+        for (int i = 0; i < MOTOR_COUNT; ++i) {
+            gpio_set_direction(static_cast<gpio_num_t>(_pins[i].cw_gpio),  GPIO_MODE_OUTPUT);
+            gpio_set_direction(static_cast<gpio_num_t>(_pins[i].ccw_gpio), GPIO_MODE_OUTPUT);
+        }
+    }
 
+    coast();
     ESP_LOGI(TAG, "All motors initialised → COAST");
 }
 
@@ -307,26 +319,34 @@ void MecanumRobot::_applyMotorVector(float fl, float fr,
  */
 void MecanumRobot::_driveMotor(MotorID id, MotorDirection dir, float speed_pct)
 {
-    const uint8_t ch = static_cast<uint8_t>(id);
+    if (_mode == DriveMode::DC) {
+        const auto cw  = static_cast<gpio_num_t>(_pins[id].cw_gpio);
+        const auto ccw = static_cast<gpio_num_t>(_pins[id].ccw_gpio);
+        switch (dir) {
+            case MotorDirection::FORWARD:
+                gpio_set_level(cw, 1); gpio_set_level(ccw, 0); break;
+            case MotorDirection::BACKWARD:
+                gpio_set_level(cw, 0); gpio_set_level(ccw, 1); break;
+            case MotorDirection::BRAKE:
+                gpio_set_level(cw, 1); gpio_set_level(ccw, 1); break;
+            case MotorDirection::COAST:
+            default:
+                gpio_set_level(cw, 0); gpio_set_level(ccw, 0); break;
+        }
+        return;
+    }
 
+    // PWM mode
+    const uint8_t ch = static_cast<uint8_t>(id);
     switch (dir) {
         case MotorDirection::FORWARD:
-            _pwm.setMotorDuty(ch, speed_pct, 0.0f);
-            break;
-
+            _pwm.setMotorDuty(ch, speed_pct, 0.0f);   break;
         case MotorDirection::BACKWARD:
-            _pwm.setMotorDuty(ch, 0.0f, speed_pct);
-            break;
-
+            _pwm.setMotorDuty(ch, 0.0f, speed_pct);   break;
         case MotorDirection::BRAKE:
-            // DRV8833: IN1=100% IN2=100% → fast electromagnetic stop
-            _pwm.setMotorDuty(ch, 100.0f, 100.0f);
-            break;
-
+            _pwm.setMotorDuty(ch, 100.0f, 100.0f);    break;
         case MotorDirection::COAST:
         default:
-            // DRV8833: IN1=0 IN2=0 → freewheel
-            _pwm.setMotorDuty(ch, 0.0f, 0.0f);
-            break;
+            _pwm.setMotorDuty(ch, 0.0f, 0.0f);        break;
     }
 }

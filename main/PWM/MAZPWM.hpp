@@ -19,12 +19,11 @@
 //    Motor 3 (RR) → MCPWM1, operator 0
 //
 //  IDF v6 bare-metal notes (ESP32-S3 specific):
-//    - Clock enable: periph_module_enable() with shared_periph_module_t
-//      ESP32-S3 uses DPORT, NOT PCR (pcr_struct.h is for ESP32-H4/C6 only)
-//      Enum values: PERIPH_MCPWM0_MODULE, PERIPH_MCPWM1_MODULE
-//      Cast required: static_cast<periph_module_t>(PERIPH_MCPWM0_MODULE)
+//    - Clock enable: SYSTEM_PERIP_CLK_EN0_REG (NOT CLK_EN1) — PWM0/1 bits
+//      live in register 0 (offset +0x18), confirmed by esp_hal_mcpwm LL
+//      RST bits: SYSTEM_PERIP_RST_EN0_REG (NOT RST_EN1), same reason
 //    - Operator members: dev->operators[i]  (NOT dev->channel[i])
-//    - Timer-operator link: dev->operators[i].operator_timer_sel
+//    - Timer-operator link: dev->operator_timersel (top-level, not per-operator)
 //    - GPIO routing: GPIO struct (soc/gpio_struct.h), NOT register macros
 // ================================================================
 #pragma once

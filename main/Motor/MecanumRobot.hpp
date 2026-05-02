@@ -11,6 +11,16 @@
 #include <cstdint>
 #include "../PWM/MAZPWM.hpp"   // bare-metal PWM driver
 
+// ── Drive mode ───────────────────────────────────────────────────
+/**
+ * @brief Selects how motor outputs are driven.
+ *
+ *   PWM — MCPWM hardware generates variable-duty PWM (variable speed).
+ *   DC  — Simple GPIO high/low (full speed or off; no speed control).
+ *         Use DC to verify wiring and DRV8833 hardware before enabling PWM.
+ */
+enum class DriveMode { PWM, DC };
+
 // ── Pin bundle for one motor ─────────────────────────────────────
 /**
  * @brief Holds the two GPIO pin numbers needed to drive a single
@@ -113,13 +123,16 @@ public:
                  MotorPins rearRight);
 
     /**
-     * @brief Initialises the MAZPWM peripheral and maps all eight GPIO
-     *        pins, then coasts every motor as a safe default.
+     * @brief Resets all motor GPIO pins and initialises the chosen drive mode.
+     *        Must be called exactly once from app_main before any movement command.
      *
-     *        Must be called exactly once from app_main before any
-     *        movement command.
+     *        DriveMode::PWM — configures MCPWM hardware (variable speed).
+     *        DriveMode::DC  — configures GPIO high/low outputs (full on/off only).
+     *                         Use to verify wiring before enabling PWM.
+     *
+     * @param mode  DriveMode::PWM (default) or DriveMode::DC
      */
-    void begin();
+    void begin(DriveMode mode = DriveMode::PWM);
 
     // ── Cardinal movements ───────────────────────────────────────
     /**
@@ -219,6 +232,7 @@ public:
 private:
     MotorPins _pins[MOTOR_COUNT];   ///< GPIO config for each motor
     MAZPWM    _pwm;                 ///< Bare-metal PWM driver instance
+    DriveMode _mode = DriveMode::PWM;
 
     /**
      * @brief Resolves four signed speed values into direction + magnitude

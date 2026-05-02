@@ -78,27 +78,28 @@ uint8_t MAZPWM::_opIdx(uint8_t motorIdx)
 /**
  * Enables the clock and releases reset for one MCPWM unit.
  *
- * ESP32-S3 uses the DPORT clock-gate system, NOT the PCR peripheral
- * (pcr_struct.h only exists for ESP32-H4/C6). The correct API is
- * periph_module_enable(), but IDF v6 renamed the enum type from
- * periph_module_t to shared_periph_module_t. The enum *values*
- * PERIPH_MCPWM0_MODULE and PERIPH_MCPWM1_MODULE still exist — only
- * the type name changed. We cast to periph_module_t explicitly to
- * satisfy the function signature which hasn't been updated yet.
+ * ESP32-S3 uses the DPORT clock-gate system. SYSTEM_PWM0/1_CLK_EN and
+ * SYSTEM_PWM0/1_RST live in PERIP_CLK_EN0 / PERIP_RST_EN0 (offset +0x18/+0x20),
+ * NOT in the _EN1/_RST_EN1 registers. Verified against esp_hal_mcpwm LL:
+ *   SYSTEM.perip_clk_en0.pwm0_clk_en = 1
+ *   SYSTEM.perip_rst_en0.pwm0_rst = 1; SYSTEM.perip_rst_en0.pwm0_rst = 0
  *
  * @param unitIdx  0 = MCPWM0, 1 = MCPWM1
  */
 void MAZPWM::_enableClock(uint8_t unitIdx)
 {
-    // IDF v6 ESP32-S3: MCPWM is absent from shared_periph_module_t.
-    // Enable clock and release reset directly via SYSTEM registers.
-    // SYSTEM_PWM0_CLK_EN = BIT(17), SYSTEM_PWM1_CLK_EN = BIT(20)
+    // ESP32-S3 DPORT peripheral init sequence (matches esp_hal_mcpwm LL):
+    //   SYSTEM_PWM0/1_CLK_EN and SYSTEM_PWM0/1_RST live in the _EN0/_RST_EN0
+    //   registers (offset +0x18/+0x20), NOT in _EN1/_RST_EN1 (+0x1C/+0x24).
+    //   Enable clock first, then pulse reset to flush stale state.
     if (unitIdx == 0) {
-        SET_PERI_REG_MASK(SYSTEM_PERIP_CLK_EN1_REG, SYSTEM_PWM0_CLK_EN);
-        CLEAR_PERI_REG_MASK(SYSTEM_PERIP_RST_EN1_REG, SYSTEM_PWM0_RST);
+        SET_PERI_REG_MASK(SYSTEM_PERIP_CLK_EN0_REG, SYSTEM_PWM0_CLK_EN);
+        SET_PERI_REG_MASK(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_PWM0_RST);
+        CLEAR_PERI_REG_MASK(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_PWM0_RST);
     } else {
-        SET_PERI_REG_MASK(SYSTEM_PERIP_CLK_EN1_REG, SYSTEM_PWM1_CLK_EN);
-        CLEAR_PERI_REG_MASK(SYSTEM_PERIP_RST_EN1_REG, SYSTEM_PWM1_RST);
+        SET_PERI_REG_MASK(SYSTEM_PERIP_CLK_EN0_REG, SYSTEM_PWM1_CLK_EN);
+        SET_PERI_REG_MASK(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_PWM1_RST);
+        CLEAR_PERI_REG_MASK(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_PWM1_RST);
     }
 }
 
@@ -128,6 +129,9 @@ void MAZPWM::_enableClock(uint8_t unitIdx)
  */
 void MAZPWM::_initUnit(volatile mcpwm_dev_t* dev)
 {
+    // Force the peripheral's APB register-file clock on so all writes land.
+    dev->clk.clk_en = 1;
+
     // Step 1: global prescaler for this unit
     dev->clk_cfg.clk_prescale = PWM_PRESCALER;
 
@@ -147,11 +151,11 @@ void MAZPWM::_initUnit(volatile mcpwm_dev_t* dev)
         else if (i == 1) dev->operator_timersel.operator1_timersel = 1;
         else             dev->operator_timersel.operator2_timersel = 2;
 
-        // ── Step 7: Comparator shadow update at TEZ ───────────────
-        // upmethod=1 → new compare value latches at timer==0 only.
-        // This ensures duty changes never glitch mid-cycle.
-        dev->operators[i].gen_stmp_cfg.gen_a_upmethod = 1;
-        dev->operators[i].gen_stmp_cfg.gen_b_upmethod = 1;
+        // ── Step 7: Comparator shadow update — immediate ──────────
+        // upmethod=0 → compare value takes effect as soon as it is written.
+        // Avoids any dependency on TEZ firing before the first duty update lands.
+        dev->operators[i].gen_stmp_cfg.gen_a_upmethod = 0;
+        dev->operators[i].gen_stmp_cfg.gen_b_upmethod = 0;
 
         // ── Steps 8–9: Generator action tables ───────────────────
         // Generator A (CW pin):

@@ -102,7 +102,8 @@ extern "C" void app_main(void)
     init_led();
 
     // Initialise bare-metal MCPWM peripheral + GPIO matrix routing
-    robot.begin();
+    robot.begin(); //robot.begin(DriveMode::DC);   // full-speed GPIO, no MCPWM
+
     delay_ms(1000); // settle: let power rails stabilise
 
     // ── Demo sequence ────────────────────────────────────────────
