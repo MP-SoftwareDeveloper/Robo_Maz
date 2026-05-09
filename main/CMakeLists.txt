@@ -10,6 +10,7 @@ idf_component_register(
         esp_driver_gpio   # driver/gpio.h
         esp_driver_mcpwm  # driver/mcpwm_*.h — IDF MCPWM driver
         esp_driver_i2c    # driver/i2c_master.h — I2C for LCD
-freertos
+        led_strip         # WS2812B on GPIO48 via RMT
+        freertos
         log
 )

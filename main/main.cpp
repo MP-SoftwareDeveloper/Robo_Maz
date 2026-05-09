@@ -35,11 +35,13 @@ extern "C"
 
 #include "Motor/MecanumRobot.hpp"  // pulls in PWM/MAZPWM.hpp transitively
 #include "LCD/MAZLCD.hpp"
+#include "led_strip.h"
 #include <cstdio>
 
 static const char *TAG = "RoboMAZ";
 
-#define BlinkLED_GPIO GPIO_NUM_46
+#define BlinkLED_GPIO     GPIO_NUM_46
+#define FullColorLED_GPIO GPIO_NUM_48  // WS2812B — driven via RMT, not plain GPIO
 
 // NOTE: effective speed range is ~70–100 %. Below ~65 % motors stall (dead band — static friction
 // exceeds torque at low duty). Values outside this range compile fine but motors will not move.
@@ -68,6 +70,21 @@ static MecanumRobot robot(PINS_FRONT_LEFT,
                           PINS_REAR_LEFT,
                           PINS_REAR_RIGHT);
 static MAZLCD lcd;
+static led_strip_handle_t _rgb_strip = nullptr;
+
+struct RGBColor { uint8_t r, g, b; };
+static constexpr RGBColor COLOR_CYCLE[] = {
+    {255,   0,   0},  // red
+    {255, 165,   0},  // orange
+    {255, 255,   0},  // yellow
+    {  0, 255,   0},  // green
+    {  0, 255, 255},  // cyan
+    {  0,   0, 255},  // blue
+    {128,   0, 128},  // purple
+    {255,   0, 255},  // magenta (pink)
+    {255, 255, 255},  // white
+};
+static constexpr uint8_t COLOR_COUNT = sizeof(COLOR_CYCLE) / sizeof(COLOR_CYCLE[0]);
 
 // ── Helper ───────────────────────────────────────────────────────
 /**
@@ -104,6 +121,16 @@ static void init_led()
     gpio_set_direction(BlinkLED_GPIO, GPIO_MODE_OUTPUT);
     gpio_set_level(BlinkLED_GPIO, 0);
 
+    // GPIO48 — WS2812B RGB LED; needs RMT, not plain GPIO
+    led_strip_config_t strip_cfg = {};
+    strip_cfg.strip_gpio_num        = (int)FullColorLED_GPIO;
+    strip_cfg.max_leds              = 1;
+    strip_cfg.led_model             = LED_MODEL_WS2812;
+    strip_cfg.color_component_format = LED_STRIP_COLOR_COMPONENT_FMT_GRB;
+    led_strip_rmt_config_t rmt_cfg = {};
+    rmt_cfg.resolution_hz = 10 * 1000 * 1000;  // 10 MHz
+    ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &_rgb_strip));
+    led_strip_clear(_rgb_strip);
 }
 
 
@@ -184,6 +211,9 @@ extern "C" void app_main(void)
         ++count;  // wraps 255 → 0 automatically (uint8_t overflow)
 
         gpio_set_level(BlinkLED_GPIO, count & 1);
+        const RGBColor& c = COLOR_CYCLE[count % COLOR_COUNT];
+        led_strip_set_pixel(_rgb_strip, 0, c.r, c.g, c.b);
+        led_strip_refresh(_rgb_strip);
         delay_ms(300);
     }
 }
