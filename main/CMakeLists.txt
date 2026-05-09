@@ -4,12 +4,10 @@ idf_component_register(
         "Motor/MecanumRobot.cpp"
         "PWM/MAZPWM.cpp"
     INCLUDE_DIRS
-        "."          # lets Motor/ include "../PWM/MAZPWM.hpp"
+        "."
     REQUIRES
-        esp_driver_gpio  # driver/gpio.h (gpio_reset_pin, gpio_set_direction, etc.)
-        esp_hw_support
+        esp_driver_gpio   # driver/gpio.h
+        esp_driver_mcpwm  # driver/mcpwm_*.h — IDF MCPWM driver
         freertos
         log
-        soc
-        hal
 )

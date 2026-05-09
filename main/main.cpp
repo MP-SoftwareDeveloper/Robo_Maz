@@ -33,7 +33,12 @@ extern "C"
 
 static const char *TAG = "RoboMAZ";
 
-#define BlinkLED_GPIO GPIO_NUM_46 // GPIO for an optional status LED (not used in this example)
+#define BlinkLED_GPIO GPIO_NUM_46
+
+// NOTE: effective speed range is ~70–100 %. Below ~65 % motors stall (dead band — static friction
+// exceeds torque at low duty). Values outside this range compile fine but motors will not move.
+static constexpr float DRIVE_SPEED  = 65.0f;  // straight / strafe speed  [65–100 %]
+static constexpr float ROTATE_SPEED = 100.0f;  // rotation speed           [65–100 %]
 
 // ── Pin definitions ──────────────────────────────────────────────
 //   Viewed from TOP, front of robot facing UP:
@@ -107,41 +112,41 @@ extern "C" void app_main(void)
     delay_ms(1000); // settle: let power rails stabilise
 
     // ── Demo sequence — repeated 4 times ────────────────────────
-    for (int pass = 1; pass <= 3; ++pass) {
+    for (int pass = 1; pass <= 1; ++pass) {
         ESP_LOGI(TAG, "=== Demo pass %d / 4 ===", pass);
 
         ESP_LOGI(TAG, "--- Forward");
-        robot.moveForward(60.0f);
+        robot.moveForward(DRIVE_SPEED);
         delay_ms(1500);
         robot.brake();
         delay_ms(500);
 
         ESP_LOGI(TAG, "--- Backward");
-        robot.moveBackward(60.0f);
+        robot.moveBackward(DRIVE_SPEED);
         delay_ms(1500);
         robot.brake();
         delay_ms(500);
 
         ESP_LOGI(TAG, "--- Strafe Left");
-        robot.strafeLeft(60.0f);
+        robot.strafeLeft(DRIVE_SPEED);
         delay_ms(1500);
         robot.brake();
         delay_ms(500);
 
         ESP_LOGI(TAG, "--- Strafe Right");
-        robot.strafeRight(60.0f);
+        robot.strafeRight(DRIVE_SPEED);
         delay_ms(1500);
         robot.brake();
         delay_ms(500);
 
         ESP_LOGI(TAG, "--- Rotate CW");
-        robot.rotateClockwise(50.0f);
+        robot.rotateClockwise(ROTATE_SPEED);
         delay_ms(1500);
         robot.brake();
         delay_ms(500);
 
         ESP_LOGI(TAG, "--- Rotate CCW");
-        robot.rotateCounterClockwise(50.0f);
+        robot.rotateCounterClockwise(ROTATE_SPEED);
         delay_ms(1500);
         robot.brake();
         delay_ms(500);
