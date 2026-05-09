@@ -11,13 +11,17 @@
 //    ├── Motor/
 //    │   ├── MecanumRobot.hpp
 //    │   └── MecanumRobot.cpp
-//    └── PWM/
-//        ├── MAZPWM.hpp
-//        └── MAZPWM.cpp
+//    ├── PWM/
+//    │   ├── MAZPWM.hpp
+//    │   └── MAZPWM.cpp
+//    └── LCD/
+//        ├── MAZLCD.hpp
+//        └── MAZLCD.cpp
 //
 //  CMakeLists.txt SRCS must include:
 //    "Motor/MecanumRobot.cpp"
 //    "PWM/MAZPWM.cpp"
+//    "LCD/MAZLCD.cpp"
 // ================================================================
 
 // Required: ESP-IDF app_main must be declared as C, not C++
@@ -29,7 +33,9 @@ extern "C"
 #include "driver/gpio.h"
 }
 
-#include "Motor/MecanumRobot.hpp" // pulls in PWM/MAZPWM.hpp transitively
+#include "Motor/MecanumRobot.hpp"  // pulls in PWM/MAZPWM.hpp transitively
+#include "LCD/MAZLCD.hpp"
+#include <cstdio>
 
 static const char *TAG = "RoboMAZ";
 
@@ -37,8 +43,8 @@ static const char *TAG = "RoboMAZ";
 
 // NOTE: effective speed range is ~70–100 %. Below ~65 % motors stall (dead band — static friction
 // exceeds torque at low duty). Values outside this range compile fine but motors will not move.
-static constexpr float DRIVE_SPEED  = 65.0f;  // straight / strafe speed  [65–100 %]
-static constexpr float ROTATE_SPEED = 100.0f;  // rotation speed           [65–100 %]
+static constexpr float DRIVE_SPEED  = 65.0f;   // straight / strafe speed  [70–100 %]
+static constexpr float ROTATE_SPEED = 70.0f;  // rotation speed           [65–100 %]
 
 // ── Pin definitions ──────────────────────────────────────────────
 //   Viewed from TOP, front of robot facing UP:
@@ -61,6 +67,7 @@ static MecanumRobot robot(PINS_FRONT_LEFT,
                           PINS_FRONT_RIGHT,
                           PINS_REAR_LEFT,
                           PINS_REAR_RIGHT);
+static MAZLCD lcd;
 
 // ── Helper ───────────────────────────────────────────────────────
 /**
@@ -92,10 +99,13 @@ static void delay_ms(uint32_t ms)
  */
 static void init_led()
 {
+    // GPIO46 — simple green LED
     gpio_reset_pin(BlinkLED_GPIO);
     gpio_set_direction(BlinkLED_GPIO, GPIO_MODE_OUTPUT);
-    gpio_set_level(BlinkLED_GPIO, 0); // off by default
+    gpio_set_level(BlinkLED_GPIO, 0);
+
 }
+
 
 extern "C" void app_main(void)
 {
@@ -106,8 +116,16 @@ extern "C" void app_main(void)
     // Initialise status LED
     init_led();
 
-    // Initialise bare-metal MCPWM peripheral + GPIO matrix routing
-    robot.begin(); //robot.begin(DriveMode::DC);   // full-speed GPIO, no MCPWM
+    // Initialise LCD (SDA=GPIO05, SCL=GPIO06, address=0x27)
+    lcd.init(GPIO_NUM_5, GPIO_NUM_6, 0x27);  // clears display internally
+    lcd.setCursor(0, 0);
+    lcd.print("                ");  // pre-clear row 0
+    lcd.setCursor(0, 1);
+    lcd.print("                ");  // pre-clear row 1
+    lcd.setCursor(0, 0);
+    lcd.print("  RoboMAZ Ready!");
+
+    robot.begin();
 
     delay_ms(1000); // settle: let power rails stabilise
 
@@ -117,50 +135,55 @@ extern "C" void app_main(void)
 
         ESP_LOGI(TAG, "--- Forward");
         robot.moveForward(DRIVE_SPEED);
-        delay_ms(1500);
-        robot.brake();
         delay_ms(500);
+        robot.brake();
+        delay_ms(200);
 
         ESP_LOGI(TAG, "--- Backward");
         robot.moveBackward(DRIVE_SPEED);
-        delay_ms(1500);
-        robot.brake();
         delay_ms(500);
+        robot.brake();
+        delay_ms(200);
 
         ESP_LOGI(TAG, "--- Strafe Left");
         robot.strafeLeft(DRIVE_SPEED);
-        delay_ms(1500);
-        robot.brake();
         delay_ms(500);
+        robot.brake();
+        delay_ms(200);
 
         ESP_LOGI(TAG, "--- Strafe Right");
         robot.strafeRight(DRIVE_SPEED);
-        delay_ms(1500);
-        robot.brake();
         delay_ms(500);
+        robot.brake();
+        delay_ms(200);
 
         ESP_LOGI(TAG, "--- Rotate CW");
         robot.rotateClockwise(ROTATE_SPEED);
-        delay_ms(1500);
-        robot.brake();
         delay_ms(500);
+        robot.brake();
+        delay_ms(200);
 
         ESP_LOGI(TAG, "--- Rotate CCW");
         robot.rotateCounterClockwise(ROTATE_SPEED);
-        delay_ms(1500);
-        robot.brake();
         delay_ms(500);
+        robot.brake();
+        delay_ms(200);
     }
 
     robot.coast();
     ESP_LOGI(TAG, "--- Demo complete. Idle.");
 
-    // ── Main loop ────────────────────────────────────────────────
+    // ── Main loop — LCD counter 0–255, repeating every 500 ms ───
+    uint8_t count = 0;
     while (true)
     {
-        delay_ms(1500);
-        gpio_set_level(BlinkLED_GPIO, 1); // off
-        delay_ms(500);
-        gpio_set_level(BlinkLED_GPIO, 0); // on
+        char buf[17];
+        snprintf(buf, sizeof(buf), "Count: %-9u", count);
+        lcd.setCursor(0, 1);
+        lcd.print(buf);
+        ++count;  // wraps 255 → 0 automatically (uint8_t overflow)
+
+        gpio_set_level(BlinkLED_GPIO, count & 1);
+        delay_ms(300);
     }
 }
