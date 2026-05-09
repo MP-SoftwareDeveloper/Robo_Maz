@@ -45,7 +45,7 @@ static const char *TAG = "RoboMAZ";
 
 // NOTE: effective speed range is ~70–100 %. Below ~65 % motors stall (dead band — static friction
 // exceeds torque at low duty). Values outside this range compile fine but motors will not move.
-static constexpr float DRIVE_SPEED  = 65.0f;   // straight / strafe speed  [70–100 %]
+static constexpr float DRIVE_SPEED  = 70.0f;   // straight / strafe speed  [70–100 %]
 static constexpr float ROTATE_SPEED = 70.0f;  // rotation speed           [65–100 %]
 
 // ── Pin definitions ──────────────────────────────────────────────
@@ -72,17 +72,17 @@ static MecanumRobot robot(PINS_FRONT_LEFT,
 static MAZLCD lcd;
 static led_strip_handle_t _rgb_strip = nullptr;
 
-struct RGBColor { uint8_t r, g, b; };
+struct RGBColor { uint8_t r, g, b; const char* name; };
 static constexpr RGBColor COLOR_CYCLE[] = {
-    {255,   0,   0},  // red
-    {255, 165,   0},  // orange
-    {255, 255,   0},  // yellow
-    {  0, 255,   0},  // green
-    {  0, 255, 255},  // cyan
-    {  0,   0, 255},  // blue
-    {128,   0, 128},  // purple
-    {255,   0, 255},  // magenta (pink)
-    {255, 255, 255},  // white
+    {255,   0,   0, "Red"},
+    {255, 165,   0, "Orange"},
+    {255, 255,   0, "Yellow"},
+    {  0, 255,   0, "Green"},
+    {  0, 255, 255, "Cyan"},
+    {  0,   0, 255, "Blue"},
+    {128,   0, 128, "Purple"},
+    {255,   0, 255, "Magenta"},
+    {255, 255, 255, "White"},
 };
 static constexpr uint8_t COLOR_COUNT = sizeof(COLOR_CYCLE) / sizeof(COLOR_CYCLE[0]);
 
@@ -204,16 +204,22 @@ extern "C" void app_main(void)
     uint8_t count = 0;
     while (true)
     {
-        char buf[17];
-        snprintf(buf, sizeof(buf), "Count: %-9u", count);
-        lcd.setCursor(0, 1);
-        lcd.print(buf);
-        ++count;  // wraps 255 → 0 automatically (uint8_t overflow)
-
-        gpio_set_level(BlinkLED_GPIO, count & 1);
         const RGBColor& c = COLOR_CYCLE[count % COLOR_COUNT];
+
+        char row0[17], row1[17];
+        snprintf(row0, sizeof(row0), "Color: %-9s", c.name);
+        snprintf(row1, sizeof(row1), "Count: %-9u",  count);
+
+        lcd.setCursor(0, 0);
+        lcd.print(row0);
+        lcd.setCursor(0, 1);
+        lcd.print(row1);
+
         led_strip_set_pixel(_rgb_strip, 0, c.r, c.g, c.b);
         led_strip_refresh(_rgb_strip);
-        delay_ms(300);
+        //gpio_set_level(BlinkLED_GPIO, count & 1);
+
+        ++count;
+        delay_ms(500);
     }
 }
