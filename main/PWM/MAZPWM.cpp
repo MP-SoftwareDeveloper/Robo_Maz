@@ -26,12 +26,32 @@
 
 #include <algorithm>
 #include <cstdint>
+#include "esp_rom_sys.h"              // esp_rom_delay_us()
+#include "esp_private/periph_ctrl.h"  // PERIPH_RCC_ATOMIC() — dual-core-safe critical section
 
 // ── Generator action values ──────────────────────────────────────
 // Written into generator[n].utez / .utea / .uteb:
 //   0 = no change | 1 = force LOW | 2 = force HIGH | 3 = toggle
 static constexpr uint32_t GEN_LOW  = 1;
 static constexpr uint32_t GEN_HIGH = 2;
+
+// ── Pre-built generator.val words (single 32-bit write, no RMW race) ─
+// Generator register layout (mcpwm_gen_reg_t):
+//   bits [1:0] gen_utez — action at TEZ  (up-count timer=0)
+//   bits [3:2] gen_utep — action at TEP  (up-count timer=period)
+//   bits [5:4] gen_utea — action at TEA  (up-count timer=compare A)
+//   bits [7:6] gen_uteb — action at TEB  (up-count timer=compare B)
+//
+// GEN_A_0PCT: gen_utez=LOW  → output forced LOW at every TEZ, stays LOW.
+//             Avoids the TEZ(→HIGH)/compare=0(→LOW) same-tick collision that
+//             makes 0 % randomly produce 100 % output.
+// GEN_A_PWM:  gen_utez=HIGH, gen_utea=LOW → standard up-count PWM waveform.
+//             compare=PWM_PERIOD_TICKS (1000) is beyond timer range 0-999,
+//             so TEA never fires → output stays HIGH = 100 % duty.
+static constexpr uint32_t GEN_A_0PCT = (GEN_LOW  << 0);                    // 0x01
+static constexpr uint32_t GEN_A_PWM  = (GEN_HIGH << 0) | (GEN_LOW << 4);  // 0x12
+static constexpr uint32_t GEN_B_0PCT = (GEN_LOW  << 0);                    // 0x01
+static constexpr uint32_t GEN_B_PWM  = (GEN_HIGH << 0) | (GEN_LOW << 6);  // 0x42
 
 // ── GPIO signal index table ──────────────────────────────────────
 // [motorIdx][0] = generator-A signal (CW  / DRV8833 IN1)
@@ -88,19 +108,23 @@ uint8_t MAZPWM::_opIdx(uint8_t motorIdx)
  */
 void MAZPWM::_enableClock(uint8_t unitIdx)
 {
-    // ESP32-S3 DPORT peripheral init sequence (matches esp_hal_mcpwm LL):
-    //   SYSTEM_PWM0/1_CLK_EN and SYSTEM_PWM0/1_RST live in the _EN0/_RST_EN0
-    //   registers (offset +0x18/+0x20), NOT in _EN1/_RST_EN1 (+0x1C/+0x24).
-    //   Enable clock first, then pulse reset to flush stale state.
-    if (unitIdx == 0) {
-        SET_PERI_REG_MASK(SYSTEM_PERIP_CLK_EN0_REG, SYSTEM_PWM0_CLK_EN);
-        SET_PERI_REG_MASK(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_PWM0_RST);
-        CLEAR_PERI_REG_MASK(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_PWM0_RST);
-    } else {
-        SET_PERI_REG_MASK(SYSTEM_PERIP_CLK_EN0_REG, SYSTEM_PWM1_CLK_EN);
-        SET_PERI_REG_MASK(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_PWM1_RST);
-        CLEAR_PERI_REG_MASK(SYSTEM_PERIP_RST_EN0_REG, SYSTEM_PWM1_RST);
+    // PERIPH_RCC_ATOMIC() is required by IDF for ALL SYSTEM register access on
+    // the dual-core ESP32-S3. Without it, Core 1 (APP_CPU) init races our writes
+    // to SYSTEM.perip_clk_en0, randomly clearing the clock-enable bit.
+    // The critical section provides both dual-core exclusion and a memory barrier,
+    // so no explicit memw instructions are needed for the writes inside.
+    PERIPH_RCC_ATOMIC() {
+        if (unitIdx == 0) {
+            SYSTEM.perip_clk_en0.pwm0_clk_en = 1;
+            SYSTEM.perip_rst_en0.pwm0_rst = 1;
+            SYSTEM.perip_rst_en0.pwm0_rst = 0;
+        } else {
+            SYSTEM.perip_clk_en0.pwm1_clk_en = 1;
+            SYSTEM.perip_rst_en0.pwm1_rst = 1;
+            SYSTEM.perip_rst_en0.pwm1_rst = 0;
+        }
     }
+    esp_rom_delay_us(5);
 }
 
 // ================================================================
@@ -138,43 +162,54 @@ void MAZPWM::_initUnit(volatile mcpwm_dev_t* dev)
     for (uint8_t i = 0; i < MCPWM_OPS_PER_UNIT; ++i) {
 
         // ── Steps 2–5: Timer configuration ───────────────────────
-        dev->timer[i].timer_cfg0.timer_prescale           = 0;
-        dev->timer[i].timer_cfg0.timer_period             = PWM_PERIOD_TICKS - 1;
-        dev->timer[i].timer_cfg0.timer_period_upmethod    = 0; // immediate
-        dev->timer[i].timer_cfg1.timer_mod                = 1; // up-count
-        dev->timer[i].timer_cfg1.timer_start              = 2; // free-run
+        // Single val writes to avoid APB RMW hazard: two sequential
+        // bitfield writes to the same register can have the second read
+        // return a stale value, corrupting the first write's field.
+        //
+        // timer_cfg0 layout: [7:0]=prescale [23:8]=period [25:24]=upmethod
+        //   prescale=0, period=999, upmethod=0 (immediate) → 0x0003E700
+        dev->timer[i].timer_cfg0.val =
+            static_cast<uint32_t>(PWM_PERIOD_TICKS - 1) << 8;
 
-        // ── Step 6: Bind operator i to timer i ───────────────────
-        // operator_timersel is a single top-level register (not per-operator).
-        // Each field selects the timer for one operator independently.
-        if (i == 0) dev->operator_timersel.operator0_timersel = 0;
-        else if (i == 1) dev->operator_timersel.operator1_timersel = 1;
-        else             dev->operator_timersel.operator2_timersel = 2;
+        // timer_cfg1 layout: [2:0]=timer_start (SC) [4:3]=timer_mod
+        //   timer_start=2 (free-run), timer_mod=1 (up-count) → 0x0A
+        // Writing both in one store guarantees timer_mod=1 is committed
+        // before hardware reads timer_start and launches the counter.
+        dev->timer[i].timer_cfg1.val = (1u << 3) | (2u << 0);
 
-        // ── Step 7: Comparator shadow update — immediate ──────────
-        // upmethod=0 → compare value takes effect as soon as it is written.
-        // Avoids any dependency on TEZ firing before the first duty update lands.
-        dev->operators[i].gen_stmp_cfg.gen_a_upmethod = 0;
-        dev->operators[i].gen_stmp_cfg.gen_b_upmethod = 0;
+        // ── Step 7: Comparator shadow update — at TEZ ────────────
+        // gen_stmp_cfg layout (IDF LL confirmed):
+        //   bits[3:0] = compare A upmethod  (bit 0 = TEZ enable)
+        //   bits[7:4] = compare B upmethod  (bit 4 = TEZ enable)
+        // 0x11 → both A and B update their shadow→active at TEZ.
+        // Using TEZ (not "immediate") eliminates the race where a new
+        // compare value is written mid-period while the timer has already
+        // passed that value, causing TEA to fire too early or not at all.
+        // Compare and TEZ always fire together → first PWM cycle is clean.
+        dev->operators[i].gen_stmp_cfg.val = 0x11;
 
-        // ── Steps 8–9: Generator action tables ───────────────────
-        // Generator A (CW pin):
-        //   utez (timer=0)      → HIGH  (pulse begins)
-        //   utea (cnt=compare A) → LOW   (pulse ends)
-        //   All other events    → no change (val=0 clears them)
-        dev->operators[i].generator[0].val      = 0;
-        dev->operators[i].generator[0].gen_utez = GEN_HIGH;
-        dev->operators[i].generator[0].gen_utea = GEN_LOW;
-
-        // Generator B (CCW pin): same pattern, uses compare B
-        dev->operators[i].generator[1].val      = 0;
-        dev->operators[i].generator[1].gen_utez = GEN_HIGH;
-        dev->operators[i].generator[1].gen_uteb = GEN_LOW;
-
-        // ── Step 10: Both compare values = 0 → coast on startup ──
-        dev->operators[i].timestamp[0].gen = 0; // compare A (CW)
-        dev->operators[i].timestamp[1].gen = 0; // compare B (CCW)
+        // ── Steps 8–10: Generator tables + coast on startup ─────
+        // Initialise compare values to 0 and put both generators in
+        // GEN_x_0PCT mode (gen_utez=LOW): at every TEZ the output goes
+        // LOW and stays LOW.  This avoids the TEZ(→HIGH)/compare=0(→LOW)
+        // same-tick collision that would otherwise leave the pin HIGH.
+        // setMotorDuty() swaps to GEN_x_PWM (TEZ→HIGH, compare→LOW) when
+        // a non-zero duty is requested.
+        dev->operators[i].timestamp[0].gen = 0;
+        dev->operators[i].timestamp[1].gen = 0;
+        dev->operators[i].generator[0].val = GEN_A_0PCT;   // CW  pin LOW
+        dev->operators[i].generator[1].val = GEN_B_0PCT;   // CCW pin LOW
     }
+
+    // Flush store buffer so all timer/generator writes above have
+    // committed to the peripheral before we bind operators to timers.
+    __asm__ volatile("memw" ::: "memory");
+
+    // ── Step 6: Bind op0→timer0, op1→timer1, op2→timer2 ─────────
+    // Single val write — avoids three RMW writes to the same register.
+    // Layout: bits[1:0]=op0sel, bits[3:2]=op1sel, bits[5:4]=op2sel
+    dev->operator_timersel.val = (2u << 4) | (1u << 2) | (0u << 0);  // 0x24
+    __asm__ volatile("memw" ::: "memory");
 }
 
 // ================================================================
@@ -217,14 +252,14 @@ void MAZPWM::attachMotorPin(uint8_t motorIdx, int cwGpio, int ccwGpio)
 //  setMotorDuty()
 // ================================================================
 /**
- * Writes new compare values to the shadow registers of one motor's
- * operator. Changes apply at the start of the next PWM period (TEZ).
+ * Sets duty cycle for both direction pins of one motor.
  *
- * PWM waveform (up-count, generator A):
- *
- *   ┌── period ──────┐
- *   │  HIGH   │ LOW  │   duty% = (cmpA / period) × 100
- *   0        cmpA  period
+ * Writes the generator action table directly (single 32-bit val store).
+ * 0 % → GEN_x_0PCT: gen_utez=LOW keeps the pin LOW every period.
+ * 1–100 % → GEN_x_PWM: gen_utez=HIGH / compare→LOW normal waveform.
+ *   At 100 % the compare equals PWM_PERIOD_TICKS (1000), which is one
+ *   tick beyond the timer range (0–999), so the compare never fires and
+ *   the output stays HIGH the full period.
  *
  * @param motorIdx  Motor index 0–3
  * @param cwDuty    CW  pin duty [0.0 – 100.0 %]
@@ -232,11 +267,28 @@ void MAZPWM::attachMotorPin(uint8_t motorIdx, int cwGpio, int ccwGpio)
  */
 void MAZPWM::setMotorDuty(uint8_t motorIdx, float cwDuty, float ccwDuty)
 {
-    volatile mcpwm_dev_t* dev = _dev(motorIdx);
-    const uint8_t op          = _opIdx(motorIdx);
+    volatile mcpwm_dev_t* dev  = _dev(motorIdx);
+    const uint8_t  op          = _opIdx(motorIdx);
+    const uint32_t cwTicks     = _dutyToTicks(cwDuty);
+    const uint32_t ccwTicks    = _dutyToTicks(ccwDuty);
 
-    dev->operators[op].timestamp[0].gen = _dutyToTicks(cwDuty);   // gen-A / CW
-    dev->operators[op].timestamp[1].gen = _dutyToTicks(ccwDuty);  // gen-B / CCW
+    // gen-A (CW pin)
+    // Write compare BEFORE switching to PWM table so the comparator
+    // never sees a stale value when the event table is enabled.
+    if (cwTicks == 0) {
+        dev->operators[op].generator[0].val = GEN_A_0PCT;
+    } else {
+        dev->operators[op].timestamp[0].gen = cwTicks;
+        dev->operators[op].generator[0].val = GEN_A_PWM;
+    }
+
+    // gen-B (CCW pin)
+    if (ccwTicks == 0) {
+        dev->operators[op].generator[1].val = GEN_B_0PCT;
+    } else {
+        dev->operators[op].timestamp[1].gen = ccwTicks;
+        dev->operators[op].generator[1].val = GEN_B_PWM;
+    }
 }
 
 // ================================================================
@@ -312,8 +364,11 @@ void MAZPWM::_routeGpio(int gpio, uint32_t signalIdx)
     // Step 1: IO MUX → GPIO matrix pass-through mode
     PIN_FUNC_SELECT(GPIO_PIN_MUX_REG[gpio], PIN_FUNC_GPIO);
 
-    // Step 2: GPIO matrix → route MCPWM signal to this pin
-    GPIO.func_out_sel_cfg[gpio].func_sel = signalIdx;
+    // Step 2: GPIO matrix → route MCPWM signal to this pin.
+    // Full val write (not bitfield RMW) so oen_sel and inv_sel are
+    // explicitly 0: output-enable is controlled by enable_w1ts below,
+    // not by the peripheral's own OE signal.
+    GPIO.func_out_sel_cfg[gpio].val = signalIdx;
 
     // Step 3: enable pad output driver
     if (gpio < 32) {

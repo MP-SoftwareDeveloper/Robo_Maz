@@ -89,7 +89,6 @@ void MecanumRobot::begin(DriveMode mode)
  */
 void MecanumRobot::moveForward(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> FORWARD  %.1f%%", speed_pct);
     _applyMotorVector(+speed_pct, +speed_pct,
                       +speed_pct, +speed_pct);
 }
@@ -102,7 +101,6 @@ void MecanumRobot::moveForward(float speed_pct)
  */
 void MecanumRobot::moveBackward(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> BACKWARD  %.1f%%", speed_pct);
     _applyMotorVector(-speed_pct, -speed_pct,
                       -speed_pct, -speed_pct);
 }
@@ -115,8 +113,6 @@ void MecanumRobot::moveBackward(float speed_pct)
  */
 void MecanumRobot::strafeLeft(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> STRAFE LEFT  %.1f%%", speed_pct);
-    //             FL          FR          RL          RR
     _applyMotorVector(-speed_pct, +speed_pct,
                       +speed_pct, -speed_pct);
 }
@@ -129,7 +125,6 @@ void MecanumRobot::strafeLeft(float speed_pct)
  */
 void MecanumRobot::strafeRight(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> STRAFE RIGHT  %.1f%%", speed_pct);
     _applyMotorVector(+speed_pct, -speed_pct,
                       -speed_pct, +speed_pct);
 }
@@ -146,7 +141,6 @@ void MecanumRobot::strafeRight(float speed_pct)
  */
 void MecanumRobot::moveDiagonalFrontLeft(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> DIAGONAL FRONT-LEFT  %.1f%%", speed_pct);
     _applyMotorVector(0,           +speed_pct,
                       +speed_pct,  0);
 }
@@ -160,7 +154,6 @@ void MecanumRobot::moveDiagonalFrontLeft(float speed_pct)
  */
 void MecanumRobot::moveDiagonalFrontRight(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> DIAGONAL FRONT-RIGHT  %.1f%%", speed_pct);
     _applyMotorVector(+speed_pct,  0,
                       0,           +speed_pct);
 }
@@ -174,7 +167,6 @@ void MecanumRobot::moveDiagonalFrontRight(float speed_pct)
  */
 void MecanumRobot::moveDiagonalRearLeft(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> DIAGONAL REAR-LEFT  %.1f%%", speed_pct);
     _applyMotorVector(-speed_pct,  0,
                       0,           -speed_pct);
 }
@@ -188,7 +180,6 @@ void MecanumRobot::moveDiagonalRearLeft(float speed_pct)
  */
 void MecanumRobot::moveDiagonalRearRight(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> DIAGONAL REAR-RIGHT  %.1f%%", speed_pct);
     _applyMotorVector(0,           -speed_pct,
                       -speed_pct,  0);
 }
@@ -204,7 +195,6 @@ void MecanumRobot::moveDiagonalRearRight(float speed_pct)
  */
 void MecanumRobot::rotateClockwise(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> ROTATE CW  %.1f%%", speed_pct);
     _applyMotorVector(+speed_pct, -speed_pct,
                       +speed_pct, -speed_pct);
 }
@@ -217,7 +207,6 @@ void MecanumRobot::rotateClockwise(float speed_pct)
  */
 void MecanumRobot::rotateCounterClockwise(float speed_pct)
 {
-    ESP_LOGI(TAG, ">> ROTATE CCW  %.1f%%", speed_pct);
     _applyMotorVector(-speed_pct, +speed_pct,
                       -speed_pct, +speed_pct);
 }
@@ -232,7 +221,6 @@ void MecanumRobot::rotateCounterClockwise(float speed_pct)
  */
 void MecanumRobot::brake()
 {
-    ESP_LOGI(TAG, "-- BRAKE");
     for (int i = 0; i < MOTOR_COUNT; ++i)
         _driveMotor(static_cast<MotorID>(i), MotorDirection::BRAKE, 0);
 }
@@ -244,7 +232,6 @@ void MecanumRobot::brake()
  */
 void MecanumRobot::coast()
 {
-    ESP_LOGI(TAG, "-- COAST");
     for (int i = 0; i < MOTOR_COUNT; ++i)
         _driveMotor(static_cast<MotorID>(i), MotorDirection::COAST, 0);
 }

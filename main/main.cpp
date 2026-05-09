@@ -106,42 +106,48 @@ extern "C" void app_main(void)
 
     delay_ms(1000); // settle: let power rails stabilise
 
-    // ── Demo sequence ────────────────────────────────────────────
-    ESP_LOGI(TAG, "--- Demo: Forward");
-    robot.moveForward(60.0f);
-    delay_ms(1500);
-    robot.brake();
-    delay_ms(500);
+    // ── Demo sequence — repeated 4 times ────────────────────────
+    for (int pass = 1; pass <= 3; ++pass) {
+        ESP_LOGI(TAG, "=== Demo pass %d / 4 ===", pass);
 
-    ESP_LOGI(TAG, "--- Demo: Backward");
-    robot.moveBackward(60.0f);
-    delay_ms(1500);
-    robot.brake();
-    delay_ms(500);
+        ESP_LOGI(TAG, "--- Forward");
+        robot.moveForward(60.0f);
+        delay_ms(1500);
+        robot.brake();
+        delay_ms(500);
 
-    ESP_LOGI(TAG, "--- Demo: Strafe Left");
-    robot.strafeLeft(60.0f);
-    delay_ms(1500);
-    robot.brake();
-    delay_ms(500);
+        ESP_LOGI(TAG, "--- Backward");
+        robot.moveBackward(60.0f);
+        delay_ms(1500);
+        robot.brake();
+        delay_ms(500);
 
-    ESP_LOGI(TAG, "--- Demo: Strafe Right");
-    robot.strafeRight(60.0f);
-    delay_ms(1500);
-    robot.brake();
-    delay_ms(500);
+        ESP_LOGI(TAG, "--- Strafe Left");
+        robot.strafeLeft(60.0f);
+        delay_ms(1500);
+        robot.brake();
+        delay_ms(500);
 
-    ESP_LOGI(TAG, "--- Demo: Rotate CW");
-    robot.rotateClockwise(50.0f);
-    delay_ms(1500);
-    robot.brake();
-    delay_ms(500);
+        ESP_LOGI(TAG, "--- Strafe Right");
+        robot.strafeRight(60.0f);
+        delay_ms(1500);
+        robot.brake();
+        delay_ms(500);
 
-    ESP_LOGI(TAG, "--- Demo: Rotate CCW");
-    robot.rotateCounterClockwise(50.0f);
-    delay_ms(1500);
+        ESP_LOGI(TAG, "--- Rotate CW");
+        robot.rotateClockwise(50.0f);
+        delay_ms(1500);
+        robot.brake();
+        delay_ms(500);
+
+        ESP_LOGI(TAG, "--- Rotate CCW");
+        robot.rotateCounterClockwise(50.0f);
+        delay_ms(1500);
+        robot.brake();
+        delay_ms(500);
+    }
+
     robot.coast();
-
     ESP_LOGI(TAG, "--- Demo complete. Idle.");
 
     // ── Main loop ────────────────────────────────────────────────

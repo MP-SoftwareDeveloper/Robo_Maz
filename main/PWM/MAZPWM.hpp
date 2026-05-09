@@ -19,9 +19,9 @@
 //    Motor 3 (RR) → MCPWM1, operator 0
 //
 //  IDF v6 bare-metal notes (ESP32-S3 specific):
-//    - Clock enable: SYSTEM_PERIP_CLK_EN0_REG (NOT CLK_EN1) — PWM0/1 bits
-//      live in register 0 (offset +0x18), confirmed by esp_hal_mcpwm LL
-//      RST bits: SYSTEM_PERIP_RST_EN0_REG (NOT RST_EN1), same reason
+//    - Clock enable: SYSTEM.perip_clk_en0.pwm0/1_clk_en = 1  (NOT clk_en1)
+//      RST pulse:   SYSTEM.perip_rst_en0.pwm0/1_rst = 1; = 0  (NOT rst_en1)
+//      Uses system_struct.h overlay — same approach as esp_hal_mcpwm LL
 //    - Operator members: dev->operators[i]  (NOT dev->channel[i])
 //    - Timer-operator link: dev->operator_timersel (top-level, not per-operator)
 //    - GPIO routing: GPIO struct (soc/gpio_struct.h), NOT register macros
@@ -33,7 +33,7 @@
 #include "soc/mcpwm_reg.h"      // base address macros (included for completeness)
 #include "soc/gpio_struct.h"    // GPIO (gpio_dev_t struct overlay)
 #include "soc/gpio_sig_map.h"   // PWM0_OUT0A_IDX … PWM1_OUT0B_IDX
-#include "soc/system_reg.h"           // SYSTEM_PERIP_CLK_EN1_REG, SYSTEM_PWM0/1_CLK_EN + RST
+#include "soc/system_struct.h"  // SYSTEM — perip_clk_en0/rst_en0 for MCPWM clock gate
 #include "soc/io_mux_reg.h"     // PIN_FUNC_SELECT, PIN_FUNC_GPIO
 #include "soc/gpio_periph.h"    // GPIO_PIN_MUX_REG[]
 
