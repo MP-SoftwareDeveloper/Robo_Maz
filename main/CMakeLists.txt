@@ -4,6 +4,7 @@ idf_component_register(
         "Motor/MecanumRobot.cpp"
         "PWM/MAZPWM.cpp"
         "LCD/MAZLCD.cpp"
+        "Compass/MAZGY271.cpp"
     INCLUDE_DIRS
         "."
     REQUIRES

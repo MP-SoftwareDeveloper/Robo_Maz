@@ -14,14 +14,18 @@
 //    ├── PWM/
 //    │   ├── MAZPWM.hpp
 //    │   └── MAZPWM.cpp
-//    └── LCD/
-//        ├── MAZLCD.hpp
-//        └── MAZLCD.cpp
+//    ├── LCD/
+//    │   ├── MAZLCD.hpp
+//    │   └── MAZLCD.cpp
+//    └── Compass/
+//        ├── MAZGY271.hpp
+//        └── MAZGY271.cpp
 //
 //  CMakeLists.txt SRCS must include:
 //    "Motor/MecanumRobot.cpp"
 //    "PWM/MAZPWM.cpp"
 //    "LCD/MAZLCD.cpp"
+//    "Compass/MAZGY271.cpp"
 // ================================================================
 
 // Required: ESP-IDF app_main must be declared as C, not C++
@@ -35,6 +39,7 @@ extern "C"
 
 #include "Motor/MecanumRobot.hpp"  // pulls in PWM/MAZPWM.hpp transitively
 #include "LCD/MAZLCD.hpp"
+#include "Compass/MAZGY271.hpp"
 #include "led_strip.h"
 #include <cstdio>
 
@@ -69,7 +74,8 @@ static MecanumRobot robot(PINS_FRONT_LEFT,
                           PINS_FRONT_RIGHT,
                           PINS_REAR_LEFT,
                           PINS_REAR_RIGHT);
-static MAZLCD lcd;
+static MAZLCD    lcd;
+static MAZGY271  compass;
 static led_strip_handle_t _rgb_strip = nullptr;
 
 struct RGBColor { uint8_t r, g, b; const char* name; };
@@ -132,31 +138,9 @@ static void init_led()
     ESP_ERROR_CHECK(led_strip_new_rmt_device(&strip_cfg, &rmt_cfg, &_rgb_strip));
     led_strip_clear(_rgb_strip);
 }
-
-
-extern "C" void app_main(void)
+void motors_demo()
 {
-    ESP_LOGI(TAG, "================================");
-    ESP_LOGI(TAG, "   Hello Robo MAZ! Starting up  ");
-    ESP_LOGI(TAG, "================================");
-
-    // Initialise status LED
-    init_led();
-
-    // Initialise LCD (SDA=GPIO05, SCL=GPIO06, address=0x27)
-    lcd.init(GPIO_NUM_5, GPIO_NUM_6, 0x27);  // clears display internally
-    lcd.setCursor(0, 0);
-    lcd.print("                ");  // pre-clear row 0
-    lcd.setCursor(0, 1);
-    lcd.print("                ");  // pre-clear row 1
-    lcd.setCursor(0, 0);
-    lcd.print("  RoboMAZ Ready!");
-
-    robot.begin();
-
-    delay_ms(1000); // settle: let power rails stabilise
-
-    // ── Demo sequence — repeated 4 times ────────────────────────
+     // ── Demo sequence — repeated 4 times ────────────────────────
     for (int pass = 1; pass <= 1; ++pass) {
         ESP_LOGI(TAG, "=== Demo pass %d / 4 ===", pass);
 
@@ -196,28 +180,70 @@ extern "C" void app_main(void)
         robot.brake();
         delay_ms(200);
     }
+}
+
+extern "C" void app_main(void)
+{
+    ESP_LOGI(TAG, "================================");
+    ESP_LOGI(TAG, "   Hello Robo MAZ! Starting up  ");
+    ESP_LOGI(TAG, "================================");
+
+    // Initialise status LED
+    init_led();
+
+    // Initialise LCD (SDA=GPIO05, SCL=GPIO06, address=0x27)
+    lcd.init(GPIO_NUM_5, GPIO_NUM_6, 0x27);  // clears display internally
+    lcd.setCursor(0, 0);
+    lcd.print("                ");  // pre-clear row 0
+    lcd.setCursor(0, 1);
+    lcd.print("                ");  // pre-clear row 1
+    lcd.setCursor(0, 0);
+    lcd.print("  RoboMAZ Ready!");
+
+    // GY-271 joins the same I2C bus the LCD already created
+    compass.init(lcd.busHandle());
+
+    robot.begin();
+
+    delay_ms(1000); // settle: let power rails stabilise
+
+    motors_demo();
+   
 
     robot.coast();
     ESP_LOGI(TAG, "--- Demo complete. Idle.");
 
-    // ── Main loop — LCD counter 0–255, repeating every 500 ms ───
+    // Cardinal direction label from heading (0°=N, clockwise)
+    auto compassDir = [](float deg) -> const char* {
+        static const char* dirs[] = {"N","NE","E","SE","S","SW","W","NW"};
+        return dirs[(int)((deg + 22.5f) / 45.0f) % 8];
+    };
+
+    // ── Main loop — compass heading on LCD, color on RGB LED ────
     uint8_t count = 0;
     while (true)
     {
+        // RGB LED cycles through colors
         const RGBColor& c = COLOR_CYCLE[count % COLOR_COUNT];
+        led_strip_set_pixel(_rgb_strip, 0, c.r, c.g, c.b);
+        led_strip_refresh(_rgb_strip);
 
+        // Read compass and display on LCD
+        float heading = 0.0f;
         char row0[17], row1[17];
-        snprintf(row0, sizeof(row0), "Color: %-9s", c.name);
-        snprintf(row1, sizeof(row1), "Count: %-9u",  count);
+
+        if (compass.read(heading) == ESP_OK) {
+            snprintf(row0, sizeof(row0), "Hdg: %5.1f deg  ", heading);
+            snprintf(row1, sizeof(row1), "Dir: %-11s", compassDir(heading));
+        } else {
+            snprintf(row0, sizeof(row0), "Hdg: --- deg    ");
+            snprintf(row1, sizeof(row1), "Dir: ---        ");
+        }
 
         lcd.setCursor(0, 0);
         lcd.print(row0);
         lcd.setCursor(0, 1);
         lcd.print(row1);
-
-        led_strip_set_pixel(_rgb_strip, 0, c.r, c.g, c.b);
-        led_strip_refresh(_rgb_strip);
-        //gpio_set_level(BlinkLED_GPIO, count & 1);
 
         ++count;
         delay_ms(500);

@@ -49,6 +49,9 @@ public:
     /** @brief Writes an integer at the current cursor position. */
     void printNum(int num);
 
+    /** @brief Returns the I2C bus handle so other devices can join the same bus. */
+    i2c_master_bus_handle_t busHandle() const { return _bus; }
+
 private:
     i2c_master_bus_handle_t _bus = nullptr;
     i2c_master_dev_handle_t _dev = nullptr;
