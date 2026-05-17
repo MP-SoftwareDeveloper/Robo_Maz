@@ -17,15 +17,19 @@
 //    ├── LCD/
 //    │   ├── MAZLCD.hpp
 //    │   └── MAZLCD.cpp
-//    └── Compass/
-//        ├── MAZGY271.hpp
-//        └── MAZGY271.cpp
+//    ├── Compass/
+//    │   ├── MAZGY271.hpp
+//    │   └── MAZGY271.cpp
+//    └── IMU/
+//        ├── MAZMPU6050.hpp
+//        └── MAZMPU6050.cpp
 //
 //  CMakeLists.txt SRCS must include:
 //    "Motor/MecanumRobot.cpp"
 //    "PWM/MAZPWM.cpp"
 //    "LCD/MAZLCD.cpp"
 //    "Compass/MAZGY271.cpp"
+//    "IMU/MAZMPU6050.cpp"
 // ================================================================
 
 // Required: ESP-IDF app_main must be declared as C, not C++
@@ -40,8 +44,10 @@ extern "C"
 #include "Motor/MecanumRobot.hpp"  // pulls in PWM/MAZPWM.hpp transitively
 #include "LCD/MAZLCD.hpp"
 #include "Compass/MAZGY271.hpp"
+#include "IMU/MAZMPU6050.hpp"
 #include "led_strip.h"
 #include <cstdio>
+#include <cmath>
 
 static const char *TAG = "RoboMAZ";
 
@@ -75,7 +81,8 @@ static MecanumRobot robot(PINS_FRONT_LEFT,
                           PINS_REAR_LEFT,
                           PINS_REAR_RIGHT);
 static MAZLCD    lcd;
-static MAZGY271  compass;
+static MAZGY271   compass;
+static MAZMPU6050 imu;
 static led_strip_handle_t _rgb_strip = nullptr;
 
 struct RGBColor { uint8_t r, g, b; const char* name; };
@@ -182,6 +189,8 @@ void motors_demo()
     }
 }
 
+static void mpuDriveRobot(float pitch, float roll);
+
 extern "C" void app_main(void)
 {
     ESP_LOGI(TAG, "================================");
@@ -200,44 +209,42 @@ extern "C" void app_main(void)
     lcd.setCursor(0, 0);
     lcd.print("  RoboMAZ Ready!");
 
-    // GY-271 joins the same I2C bus the LCD already created
+    // GY-271 and MPU-6050 join the same I2C bus the LCD already created
     compass.init(lcd.busHandle());
+    imu.init(lcd.busHandle());
 
     robot.begin();
 
     delay_ms(1000); // settle: let power rails stabilise
 
-    motors_demo();
+    //motors_demo();
    
 
     robot.coast();
     ESP_LOGI(TAG, "--- Demo complete. Idle.");
 
-    // Cardinal direction label from heading (0°=N, clockwise)
     auto compassDir = [](float deg) -> const char* {
         static const char* dirs[] = {"N","NE","E","SE","S","SW","W","NW"};
         return dirs[(int)((deg + 22.5f) / 45.0f) % 8];
     };
 
-    // ── Main loop — compass heading on LCD, color on RGB LED ────
-    uint8_t count = 0;
     while (true)
     {
-        // RGB LED cycles through colors
-        const RGBColor& c = COLOR_CYCLE[count % COLOR_COUNT];
-        led_strip_set_pixel(_rgb_strip, 0, c.r, c.g, c.b);
-        led_strip_refresh(_rgb_strip);
-
-        // Read compass and display on LCD
-        float heading = 0.0f;
         char row0[17], row1[17];
 
-        if (compass.read(heading) == ESP_OK) {
-            snprintf(row0, sizeof(row0), "Hdg: %5.1f deg  ", heading);
-            snprintf(row1, sizeof(row1), "Dir: %-11s", compassDir(heading));
+        float heading = 0.0f;
+        if (compass.read(heading) == ESP_OK)
+            snprintf(row0, sizeof(row0), "Hdg:%5.1f %s  ", heading, compassDir(heading));
+        else
+            snprintf(row0, sizeof(row0), "Hdg: ---        ");
+
+        float pitch = 0.0f, roll = 0.0f;
+        if (imu.readAngles(pitch, roll) == ESP_OK) {
+            mpuDriveRobot(pitch, roll);
+            snprintf(row1, sizeof(row1), "P:%-5d R:%-5d ", (int)pitch, (int)roll);
         } else {
-            snprintf(row0, sizeof(row0), "Hdg: --- deg    ");
-            snprintf(row1, sizeof(row1), "Dir: ---        ");
+            robot.coast();
+            snprintf(row1, sizeof(row1), "IMU error       ");
         }
 
         lcd.setCursor(0, 0);
@@ -245,7 +252,40 @@ extern "C" void app_main(void)
         lcd.setCursor(0, 1);
         lcd.print(row1);
 
-        ++count;
-        delay_ms(500);
+        delay_ms(100);
+    }
+}
+
+// ================================================================
+//  mpuDriveRobot()
+//  Translates MPU-6050 pitch/roll angles into robot movement.
+//    Pitch < 0 (nose down) → forward
+//    Pitch > 0 (nose up)   → backward
+//    Roll  > 0 (right)     → strafe right
+//    Roll  < 0 (left)      → strafe left
+//    Dominant axis wins. Speed is proportional to tilt (70–100 %).
+// ================================================================
+static void mpuDriveRobot(float pitch, float roll)
+{
+    constexpr float DEADBAND = 8.0f;
+    constexpr float MAX_TILT = 40.0f;
+
+    auto tiltSpeed = [](float tilt) -> float {
+        float t = (tilt - DEADBAND) / (MAX_TILT - DEADBAND);
+        return 70.0f + (t < 1.0f ? t : 1.0f) * 30.0f;
+    };
+
+    const bool pitchActive   = fabsf(pitch) > DEADBAND;
+    const bool rollActive    = fabsf(roll)  > DEADBAND;
+    const bool pitchDominant = fabsf(pitch) >= fabsf(roll);
+
+    if (pitchActive && pitchDominant) {
+        if (pitch < 0)  robot.moveForward(tiltSpeed(-pitch));
+        else            robot.moveBackward(tiltSpeed(pitch));
+    } else if (rollActive) {
+        if (roll > 0)   robot.strafeLeft(tiltSpeed(roll));
+        else            robot.strafeRight(tiltSpeed(-roll));
+    } else {
+        robot.coast();
     }
 }

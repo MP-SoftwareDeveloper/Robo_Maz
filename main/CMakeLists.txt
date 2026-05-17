@@ -5,6 +5,7 @@ idf_component_register(
         "PWM/MAZPWM.cpp"
         "LCD/MAZLCD.cpp"
         "Compass/MAZGY271.cpp"
+        "IMU/MAZMPU6050.cpp"
     INCLUDE_DIRS
         "."
     REQUIRES
